@@ -8,6 +8,7 @@ const {get} = require('lodash');
 
 const COMMANDS = {
     search: "Поиск",
+    search_in_my_lib: "Поиск по своей библиотеке",
     thnx: "Сказать спасибо",
     sales_get: "Мои скидки",
     sales_set: "Изменить скидки",
@@ -20,7 +21,8 @@ const sessionData = {
 };
 
 const keyboard = Markup.keyboard([
-        [COMMANDS.sales_get, COMMANDS.sales_set]
+        [COMMANDS.sales_get, COMMANDS.sales_set],
+        [COMMANDS.search_in_my_lib]
     ]).resize();
 
 const keyboardSetSale = Markup.inlineKeyboard([
@@ -70,12 +72,20 @@ bot.on('text', async ctx =>  {
             ctx.session.lastCommand = COMMANDS.search;
             ctx.reply('Отлично, введи поисковый запрос в виде: Фамилия автора-Название', keyboard);
             break;
+        case COMMANDS.search_in_my_lib:
+            ctx.session.lastCommand = COMMANDS.search_in_my_lib;
+            ctx.reply('Отлично, введи поисковый запрос');
+            break;
         default:
             switch (ctx.session.lastCommand) {
                 case COMMANDS.labirint_set_sale:
                     ctx.session.lastCommand = COMMANDS.search;
                     ctx.session.labirint_sale = ctx.message.text;
                     ctx.reply('Отлично, скидка изменена');
+                    break;
+                case COMMANDS.search_in_my_lib:
+                    ctx.session.lastCommand = COMMANDS.search;
+                    await searchInMyLibrary(ctx);
                     break;
                 case undefined:
                 case null:
@@ -85,7 +95,7 @@ bot.on('text', async ctx =>  {
                     await searchLabirint(ctx);
                     await searchProdalit(ctx);
                     await searchOzon(ctx);
-                    await searchWildberries(ctx);
+                    //await searchWildberries(ctx);
                     await searchChitaiGorod(ctx);
                     break;
                 default:
@@ -99,6 +109,16 @@ bot.on('text', async ctx =>  {
 bot.launch(); // запуск бота
 
 //region ChitaiGorod Methods
+
+const keyboardChitai = {
+    disable_web_page_preview: true,
+    reply_markup: {
+        keyboard: [
+            [COMMANDS.sales_get, COMMANDS.sales_set],
+            [{text: COMMANDS.search_in_my_lib}]
+        ],
+        resize_keyboard: true
+    }};
 
 const searchChitaiGorod = async (ctx) => {
     try {
@@ -118,15 +138,12 @@ const searchChitaiGorod = async (ctx) => {
                 } else {
                     booksShow = books;
                 }
-                await ctx.replyWithHTML(`<b>Читай город</b>: ${!books.length ? "Ничего не найдено" : `Найдено: ${books.length} шт.`}\n${!books.length ? "" : `${booksShow.map(book => `[${book.publisher}] ${book.author} ${book.name} - <b>${book.price}₽</b> <a href="https://www.chitai-gorod.ru${book.link}">ссылка</a>`).join("\n")}`}${booksOtherlength ? `\nИ еще ${booksOtherlength} <a href="https://www.chitai-gorod.ru/search/result/?q=${encodeURIComponent(ctx.message.text)}&page=1">результатов</a>` : ""}`,
-                    {
-                        disable_web_page_preview: true
-                    });
+                await ctx.replyWithHTML(`<b>Читай город</b>: ${!books.length ? "Ничего не найдено" : `Найдено: ${books.length} шт.`}\n${!books.length ? "" : `${booksShow.map(book => `[${book.publisher}] ${book.author} ${book.name} - <b>${book.price}₽</b> <a href="https://www.chitai-gorod.ru${book.link}">ссылка</a>`).join("\n")}`}${booksOtherlength ? `\nИ еще ${booksOtherlength} <a href="https://www.chitai-gorod.ru/search/result/?q=${encodeURIComponent(ctx.message.text)}&page=1">результатов</a>` : ""}`, keyboardChitai);
             } else {
-                ctx.replyWithHTML("<b>Читай город</b>: Ошибка получения подробностей. Попробуйте позже");
+                ctx.replyWithHTML("<b>Читай город</b>: Ошибка получения подробностей. Попробуйте позже", keyboardChitai);
             }
         } else {
-            ctx.replyWithHTML("<b>Читай город</b>: Ошибка поиска. Попробуйте позже");
+            ctx.replyWithHTML("<b>Читай город</b>: Ошибка поиска. Попробуйте позже", keyboardChitai);
         }
     }
     catch (e) {
@@ -200,21 +217,19 @@ const searchLabirint = async ctx => {
 
         const root = parse(response.body);
         let books = [];
-        root.querySelectorAll('.card-column').map((card, i) => {
-            card.childNodes.map((item, j) => {
-                if (item.rawAttrs) {
-                    const dataArrayString = item.rawAttrs
-                        .replace(/\r\n/g, '')
-                        .replace(/"/g, '')
-                        .split('data-');
-                    const data = {};
-                    dataArrayString.map(str => {
-                        const pair = str.split("=");
-                        data[pair[0]] = pair[1];
-                    });
-                    books.push(data);
-                }
-            });
+        root.querySelectorAll('.product').map(card => {
+            if (card.rawAttrs) {
+                const dataArrayString = card.rawAttrs
+                    .replace(/\r\n/g, '')
+                    .replace(/"/g, '')
+                    .split('data-');
+                const data = {};
+                dataArrayString.map(str => {
+                    const pair = str.split("=");
+                    data[pair[0]] = pair[1];
+                });
+                books.push(data);
+            }
         });
         books = books.filter(book => book.name && book["available-status"] !== '0');
         let booksShow, booksOtherlength;
@@ -279,11 +294,16 @@ const searchOzon = async ctx => {
         return puppeteer
             .launch()
             .then(browser => browser.newPage())
-            .then(page => page.goto(`https://www.ozon.ru/category/knigi-16500/?from_global=true&text=${encodeURIComponent(ctx.message.text)}`).then(() => page.content()))
+            .then(page => {
+                page.setUserAgent('Mozilla/5.0 (Windows NT 5.1; rv:5.0) Gecko/20100101 Firefox/5.0');
+                return page.goto(`https://www.ozon.ru/category/knigi-16500/?category_was_predicted=true&deny_category_prediction=true&from_global=true&text=${encodeURIComponent(ctx.message.text)}`).then(() => page.content());
+            })
             .then(async html => {
                 const root = parse(html);
                 let books = [];
-                root.querySelectorAll('.bh6').map((card, i) => {
+                const container = root.querySelectorAll('.widget-search-result-container');
+                const productCards = get(container, "0.childNodes.0.childNodes", []).filter(i => i.nodeType === 1 && i.childNodes.length > 0);
+                productCards.map((card, i) => {
                     let price, name, url;
                     const cardHTMLElements = card.childNodes.filter(i => i.childNodes.length);
                     const containerInfo = cardHTMLElements[1];
@@ -349,8 +369,8 @@ const searchWildberries = async ctx => {
 
         if (response.isError)
             return null;
-        const xinfo = JSON.parse(response.body).xinfo;
 
+        const xinfo = JSON.parse(response.body).xinfo;
 
         const options1 = {
             "headers": {
@@ -419,6 +439,25 @@ const searchWildberries = async ctx => {
         console.log("ОШИБКА WILDBERRIES", e);
         ctx.replyWithHTML("<b>Wildberries</b>: Ошибка поиска. Попробуйте позже");
     }
+};
+//endregion
+
+//region Поиск в библиотеке Лены
+const searchInMyLibrary = async (ctx) => {
+    const books = await getBooksInMyLibrary(ctx.message.text);
+    await ctx.replyWithHTML(`<b>Моя библиотека</b>: ${!books.length ? "Ничего не найдено" : `Найдено: ${books.length} шт.`}\n${!books.length ? "" : `${books.map(book => `${book.author} - ${book.name} (${book.serie})`).join("\n")}`}`, keyboardChitai);
+};
+
+const getBooksInMyLibrary = async q => {
+    const options = {
+        method: 'GET',
+        url: `https://api.orion38.pro/api_v2/index.php?method=LenaLibrary.Find&q=${encodeURIComponent(q.toUpperCase())}`
+    };
+    const response = await requestPost(options);
+    if (response.isError)
+        return null;
+
+    return JSON.parse(response.body);
 };
 //endregion
 
